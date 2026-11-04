@@ -1,0 +1,48 @@
+[project]
+name = "sam-server"
+version = "0.1.0"
+description = "SAM 3 / 3.1 inference node: upstream sam3 API over HTTP"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sam3",
+    "torch>=2.7.0",
+    "torchvision>=0.22.0",
+    "numpy>=1.26,<2",
+    "pillow>=10.0.0",
+    "pycocotools>=2.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    # sam3 runtime deps missing from its base dependency list
+    "einops",
+    "decord",
+    "psutil",
+    "scipy",
+    "opencv-python-headless",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "httpx"]
+
+[project.scripts]
+sam-server = "sam_server.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sam_server"]
+
+[tool.uv.sources]
+sam3 = { path = "../third_party/sam3", editable = true }
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
