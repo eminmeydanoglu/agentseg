@@ -4,53 +4,46 @@ https://github.com/user-attachments/assets/fb0eea35-f1d4-40ef-aed4-acd7993e6c02
 
 # AgentSeg
 
-AgentSeg labels objects in videos and image sequences with a coding agent. The agent
-drives SAM 3 through the `agentseg` CLI: it draws the first mask, tracks the object
-through every frame, checks the track for problems (lost object, drift, jumps), fixes
-them with extra keyframes, and exports YOLO / COCO labels. The web UI shows each step
-live, plays runs back, and has a box → SAM tool so you can label by hand or help the agent.
+AgentSeg labels objects in sequences of video frames. A Muse Code agent uses the
+`agentseg` CLI to prompt SAM 3, track objects across frames, review suspected
+tracking errors, and refine tracks with additional keyframes. You can watch and
+replay agent runs in the web UI or label individual frames by hand. AgentSeg
+exports YOLO segmentation, YOLO detection, and COCO annotations.
 
 ## Requirements
 
-- [uv](https://docs.astral.sh/uv/) and [bun](https://bun.sh)
-- **SAM 3**, either locally or over HTTP:
-  - **Local:** Linux with an NVIDIA GPU (about 16 GB VRAM for video tracking) and
-    either Hugging Face access to [facebook/sam3](https://huggingface.co/facebook/sam3)
-    or a local SAM 3 checkpoint.
-  - **Remote API:** A reachable endpoint that implements the [`sam_server` HTTP API](sam_server/README.md)
-    for SAM 3 image segmentation and video tracking. The machine running AgentSeg
-    does not need an NVIDIA GPU or SAM 3 weights.
-- For the agent: the Muse Code CLI (`muse`) and a `META_API_KEY`
+- Python 3.12 (managed by [uv](https://docs.astral.sh/uv/)), [Bun](https://bun.sh)
+  for the web UI, and `lsof` for stopping local services with `agentseg down`.
+- **Local SAM 3:** Linux, a CUDA 12.8 compatible NVIDIA driver and GPU (plan
+  for around 16 GB of VRAM for video tracking), and either access to the
+  gated [facebook/sam3](https://huggingface.co/facebook/sam3) model or a local checkpoint.
+- **Or a remote SAM 3 API:** A reachable server that implements the
+  [`sam_server` HTTP API](sam_server/README.md#api) for SAM 3 image segmentation
+  and video tracking. AgentSeg itself does not need an NVIDIA GPU or SAM 3 weights.
+- **For automated labeling:** Muse Code (`muse`) and a `META_API_KEY`.
+  Manual labeling from the web UI or CLI does not require Muse Code.
 
 ## Setup
 
 ```bash
 git clone https://github.com/eminmeydanoglu/agentseg.git
 cd agentseg
-uv sync                          # backend + CLI venv
+uv sync --locked --python 3.12
 ```
 
-For local SAM 3, initialize its submodule and set up its separate environment:
+### Local SAM 3
 
 ```bash
 git submodule update --init third_party/sam3
-(cd sam_server && uv sync && uv run hf auth login)
+(cd sam_server && uv sync --locked --python 3.12)
 ```
 
-Skip Hugging Face login if you already have the local checkpoint below. If you
-use a remote SAM 3 API, skip this server setup entirely.
+Put a local checkpoint at `models/sam3/sam3.pt`, or request access to
+[facebook/sam3](https://huggingface.co/facebook/sam3) and run
+`(cd sam_server && uv run hf auth login)`. The server downloads the weights on
+first launch if no local checkpoint is present.
 
-Optional model files in `models/`:
-
-- `models/sam3/sam3.pt`: a local SAM 3 checkpoint, used instead of the Hugging Face download.
-- `models/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth`: DINOv3 ViT-B/16
-  ([request access](https://ai.meta.com/resources/models-and-libraries/dinov3-downloads/)).
-  It improves the track health checks; without it they use mask geometry only.
-  To use it, also run `git submodule update --init third_party/dinov3`.
-
-## Run
-
-**With local SAM 3:**
+From the repository root:
 
 ```bash
 uv run agentseg up
@@ -58,46 +51,92 @@ uv run agentseg up
 
 This starts `sam_server` on port 8770. The first load takes 1–2 minutes.
 
-**With a remote SAM 3 API:** Set `SAM_SERVER_URL` to the server's base URL and
-skip launching a local SAM 3 server:
+### Remote SAM 3 API
+
+Skip the local SAM 3 setup. Set `SAM_SERVER_URL` to the base URL of a compatible
+server and start AgentSeg without launching a local SAM 3 server:
 
 ```bash
-SAM_SERVER_URL=http://sam-host:8770 uv run agentseg up --no-sam
+export SAM_SERVER_URL=http://sam-host:8770
+uv run agentseg up --no-sam
 ```
 
-AgentSeg sends image and frame directory paths to the API. Make the files
-available on both machines at the same paths (for example, via a shared mount).
+Mount the source images and project directory at the same absolute paths on
+both machines. AgentSeg sends paths instead of uploading image files. For video
+tracking, SAM 3 also needs to read the symlinks AgentSeg creates under the
+project's `.agentseg/frames/` directory and resolve them to the source images.
 
-Both modes build the web UI and start the backend. Open http://localhost:5172.
-`agentseg status` shows what is running, `agentseg down` stops the backend, and
-`agentseg down --all` also stops a locally started `sam_server`. Logs are in `.agentseg/`.
+If the backend is already running, use `uv run agentseg down` before starting it
+with a different `SAM_SERVER_URL`.
 
-**Label with the agent.** Give the agent its key, then start a run:
+### Open the UI
+
+Both startup commands build the web UI and start the backend. Open
+<http://localhost:5172>. Use `uv run agentseg status` to inspect the services
+and `uv run agentseg down` to stop the backend. With local SAM 3, add `--all`
+to stop its server too. Logs are in `.agentseg/` by default.
+
+### Optional: appearance checks with DINOv3
+
+To check object appearance as well as mask geometry, run
+`git submodule update --init third_party/dinov3` and place the
+[DINOv3 ViT-B/16 weights](https://ai.meta.com/resources/models-and-libraries/dinov3-downloads/)
+at `models/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth`. Without them,
+track health checks use mask geometry alone.
+
+## Label and export
+
+Open an existing AgentSeg project or use a directory of images. For a video
+file, extract the frames first. For example, with FFmpeg installed:
 
 ```bash
-cp .env.example .env             # put META_API_KEY=... in it
+mkdir -p frames
+ffmpeg -i input.mp4 frames/%06d.jpg
+```
+
+**Label with the agent.** Install Muse Code where the backend runs. Copy
+`.env.example` to `.env` if needed, and set `META_API_KEY` there. Then start a run:
+
+```bash
 uv run agentseg agent run "label the torpedo" --images /path/to/frames
 ```
 
 The run streams into the web UI. Transcripts go to `.agentseg/agent_runs/<id>/`, and
-`http://localhost:5172/?replay=<id>` plays a run back. `agentseg agent status` and
-`agentseg agent stop` manage runs.
+`http://localhost:5172/?replay=<id>` plays a recorded run back. Use
+`uv run agentseg agent status` to find run IDs and `uv run agentseg agent stop`
+to stop the latest run.
 
 **Label from the CLI.** The commands the agent uses also work by hand:
-`agentseg project open`, `segment`, `track create | propagate | issues | refine`,
-`view`, `sheet`, `export`. Run `agentseg --help` for the full list. The agent's
-workflow is in [.agent/skills/agentseg-label/SKILL.md](.agent/skills/agentseg-label/SKILL.md).
+`project open`, `segment`, `track create`, `track propagate`, `track issues`,
+and `track refine`. Use `uv run agentseg --help` for the full list and see the
+[labeling workflow](.agent/skills/agentseg-label/SKILL.md) for examples.
 
 **Label in the UI.** Create or open a project, pick a label, draw a box (B) and press
 S for a SAM mask. In refine mode (R), click to add positive points or right-click to
 add negative ones, then press S again.
 
+**Export labels.** Use Export in the web UI, or run
+`uv run agentseg export --format yolo-seg` for YOLO polygons. The CLI also
+supports `--format yolo-detect` and `--format coco` for bounding boxes. To include
+available segmentation polygons in COCO JSON, enable that option in the web UI.
+
 ## Development
 
+Run these commands from the repository root. To develop the UI against the
+backend, start AgentSeg with the SAM 3 setup above, then run the Vite server:
+
 ```bash
-cd frontend && bun run dev       # hot reload on :5173, proxies /api to :5172
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --extra dev python -m pytest
-cd frontend && bun run test
+(cd frontend && bun install --frozen-lockfile && bun run dev)
+```
+
+Open <http://localhost:5173> for hot reload. Vite forwards `/api` requests to
+the backend on port 5172.
+
+Run the backend and frontend tests independently:
+
+```bash
+PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run --locked --extra dev python -m pytest
+(cd frontend && bun install --frozen-lockfile && bun run test)
 ```
 
 ## License
