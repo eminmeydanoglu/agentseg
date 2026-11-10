@@ -1,3 +1,7 @@
+https://github.com/user-attachments/assets/fb0eea35-f1d4-40ef-aed4-acd7993e6c02
+
+[Watch on YouTube](https://youtu.be/ZMFX1F-xzEI)
+
 # AgentSeg
 
 AgentSeg labels objects in videos and image sequences with a coding agent. The agent
@@ -6,27 +10,35 @@ through every frame, checks the track for problems (lost object, drift, jumps), 
 them with extra keyframes, and exports YOLO / COCO labels. The web UI shows each step
 live, plays runs back, and has a box → SAM tool so you can label by hand or help the agent.
 
-## Demo
-
-https://github.com/user-attachments/assets/a79194ce-0ec5-490c-a6d3-dc302c9da3ac
-
 ## Requirements
 
-- Linux with an NVIDIA GPU (about 16 GB VRAM for SAM 3 video)
 - [uv](https://docs.astral.sh/uv/) and [bun](https://bun.sh)
-- Hugging Face access to [facebook/sam3](https://huggingface.co/facebook/sam3)
+- **SAM 3**, either locally or over HTTP:
+  - **Local:** Linux with an NVIDIA GPU (about 16 GB VRAM for video tracking) and
+    either Hugging Face access to [facebook/sam3](https://huggingface.co/facebook/sam3)
+    or a local SAM 3 checkpoint.
+  - **Remote API:** A reachable endpoint that implements the [`sam_server` HTTP API](sam_server/README.md)
+    for SAM 3 image segmentation and video tracking. The machine running AgentSeg
+    does not need an NVIDIA GPU or SAM 3 weights.
 - For the agent: the Muse Code CLI (`muse`) and a `META_API_KEY`
 
 ## Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/talhabw/autoseg.git
-cd autoseg
+git clone https://github.com/eminmeydanoglu/agentseg.git
+cd agentseg
 uv sync                          # backend + CLI venv
-cd sam_server && uv sync         # SAM 3 server venv (separate torch build)
-uv run hf auth login             # SAM 3 weights download on the first start
-cd ..
 ```
+
+For local SAM 3, initialize its submodule and set up its separate environment:
+
+```bash
+git submodule update --init third_party/sam3
+(cd sam_server && uv sync && uv run hf auth login)
+```
+
+Skip Hugging Face login if you already have the local checkpoint below. If you
+use a remote SAM 3 API, skip this server setup entirely.
 
 Optional model files in `models/`:
 
@@ -34,17 +46,31 @@ Optional model files in `models/`:
 - `models/dinov3_vitb16_pretrain_lvd1689m-73cec8be.pth`: DINOv3 ViT-B/16
   ([request access](https://ai.meta.com/resources/models-and-libraries/dinov3-downloads/)).
   It improves the track health checks; without it they use mask geometry only.
+  To use it, also run `git submodule update --init third_party/dinov3`.
 
 ## Run
+
+**With local SAM 3:**
 
 ```bash
 uv run agentseg up
 ```
 
-This starts `sam_server` (:8770, the first load takes 1-2 min), builds the web UI and
-starts the backend. Open http://localhost:5172. `agentseg status` shows what is
-running, `agentseg down` stops the backend and `agentseg down --all` also stops
-`sam_server`. Logs are in `.agentseg/`.
+This starts `sam_server` on port 8770. The first load takes 1–2 minutes.
+
+**With a remote SAM 3 API:** Set `SAM_SERVER_URL` to the server's base URL and
+skip launching a local SAM 3 server:
+
+```bash
+SAM_SERVER_URL=http://sam-host:8770 uv run agentseg up --no-sam
+```
+
+AgentSeg sends image and frame directory paths to the API. Make the files
+available on both machines at the same paths (for example, via a shared mount).
+
+Both modes build the web UI and start the backend. Open http://localhost:5172.
+`agentseg status` shows what is running, `agentseg down` stops the backend, and
+`agentseg down --all` also stops a locally started `sam_server`. Logs are in `.agentseg/`.
 
 **Label with the agent.** Give the agent its key, then start a run:
 
